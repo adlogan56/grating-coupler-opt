@@ -1,0 +1,346 @@
+filename = "grating_run3"; 		# Base file name
+base_path = pwd;
+save_path = base_path + "/GaPOx 200/SHG_2021_05_11/";
+param_path = base_path + "/GaPOx 200/";
+param_file = "2021_05_11_SHG_200_3.json";
+autoq = 1;
+autorun = 1; 		# Set to 1 to automatically queue and run generated files
+
+hyak = 0;
+json = 0;
+if(json){
+    hyak = 0;
+}
+
+hyak_proto = 'C:\Users\adlogan\Dropbox\Frequency Conversion\Lumerical\Hyak\proto.slurm';
+hyak_command = 'mpiexec.hydra fdtd-engine-impi-lcl ';
+hyak_path = 'OptoSpin/2018_12_gratings/';
+hyak_name = 'gratings';
+hyak_file = save_path + hyak_name + '.slurm';
+
+wavelength = [1550,1080,637,775];	#in nm
+TM = [0,0,1,1];		#which wavelengths to make TM
+WL_span = [200,120,50,70];
+n_GaP = [3.05, 3.1, 3.31, 3.21];
+n_LN = [2.24];
+n_SiO2 = [1.44, 1.45, 1.457, 1.454];	#For SiO2
+w_wg = [3000,3000,3000,3000];#[3500,2500,1500,1800];   # Width of grating, in nm
+accuracy = 2;
+time_step = 0.8;
+sidewall = 88;   #Sidewall angle
+
+h_sub = 0;	#nanometers; zero for single substrate layer
+n_sub = n_SiO2;	#Top to bottom; last one extends beyond the simulation region (no thickness required
+
+h_wg = [200;60];
+n_wg = [n_GaP;n_SiO2];	#Each row is a layer, bottom to top; air above top layer. Each column corresponds to a wavelength
+
+span_side = 1500e-9;
+span_end = 1600e-9;
+
+
+w_sim = w_wg(1)*1e-9 + 2*span_side;
+
+
+scale = [0.9,0.95];
+L_min = 50;             # Minimum distance between notches, in nanometers
+
+if(json){
+    jsonload(param_path + param_file);
+    design_num = length(S_final);
+    wl_num = length(gr_spec);
+    end_type = gr_spec{1}.end;
+    d = gr_spec{1}.d;
+}else{
+    matlab("clear all");
+    matcmd = "load('" + param_path + param_file;
+    matlab(matcmd + "')");
+    matlab("design_num = length(S_final);");
+    matlab("wl_num = length(gr_spec);");
+    matlab("end_type = gr_spec{1}.end;");
+    matlab("d = gr_spec{1}.d;");
+    
+    matlabget(d,wl_num,design_num,end_type);
+}
+
+sim_designs = [5,15];#1:design_num;         # which designs to simulate
+
+d = d*1000;
+lambda = matrix(1,wl_num);
+for(ii = 1:length(lambda)){
+    if(json){
+        lambda(ii) = gr_spec{ii}.lambda;
+    }else{
+        matlabput(ii);
+        matlab("temp = gr_spec{ii}.lambda");
+        matlabget(temp);
+        lambda(ii) = temp;
+    }
+}
+
+modes = zeros(1,length(lambda));
+for (iL = 1:length(lambda)){
+    iw = 0;
+    for(0;(!modes(iL))&(iw<length(wavelength));0){
+        iw = iw + 1;
+        if(lambda(iL)*1000 == wavelength(iw)){
+            modes(iL) = iw;
+        }
+    }
+    
+    if(!modes(iL)){
+        ?"WARNING, wavelength not found";
+        break;
+    }
+}
+
+
+if(hyak){
+    cp(hyak_proto, hyak_file);
+    matlabput(hyak_file, hyak_command, hyak_path);
+    ?matlab("hyak = fopen(hyak_file,'a')");
+}
+
+
+### File Generation script starts here
+for(ig = sim_designs){
+    if(json){
+        L = 1000*L_final{ig};
+        S = S_final{ig};
+    }else{
+        matlab("S = S_final{" + num2str(ig) + "};");
+        matlab("L = L_final{" + num2str(ig) + "}*1000;");
+        matlabget(L,S);
+    }
+    
+    L_base = L;
+    S_base = S;
+    
+    for(isc = 1:length(scale)){
+        
+        
+        switchtolayout;
+        groupscope("::model");
+        deleteall;
+        
+        L = L_base;
+        S = S_base;
+        
+        for (ii = 1:length(L)){
+            L(ii) = max([L(ii)*scale(isc),L_min]);
+        }
+        
+        gaps = matrix(1,length(L));
+        
+        for(ij = 1:length(gaps)){
+            gaps(ij) = max([L_min,d(S(ij))*scale(isc)]);
+        }
+        
+        L_total = sum(L);
+        
+        for(il = 1:length(L)){
+            L_total = L_total + gaps(il);
+        }
+        
+        L_sim = L_total*1e-9 + span_end;
+        
+        z_sub = 0;
+        if(h_sub){
+            for(ii = 1:length(h_sub)){    #add each substrate layer
+                addrect;
+                set("name","substrate" + num2str(ii));
+                set("x",0);
+                set("x span",30e-6);
+                set("y",0);
+                set("y span",30e-6);
+                set("z max",z_sub);
+                set("z min",z_sub - h_sub(ii)*1e-9);
+                z_sub = z_sub - h_sub(ii)*1e-9;
+                #set("index",n_sub(ii));
+            }
+        }
+        addrect;         # add bottom substrate layer
+        set("name","substrate");
+        set("x",0);
+        set("x span",30e-6);
+        set("y",0);
+        set("y span",30e-6);
+        set("z max",z_sub);
+        set("z min",z_sub - 5000*1e-9);
+        #set("index",n_sub(length(n_sub)));
+        
+        z_wg = 0;
+        
+        for(ij = 1:length(h_wg)){     # add each waveguide layer
+            addrect;
+            set("name","waveguide" + num2str(ij));
+            set("x",0);
+            set("x span", 30e-6);
+            set("y",0);
+            set("y span",30e-6);
+            set("z min",z_wg);
+            set("z max",z_wg + h_wg(ij)*1e-9);
+            z_wg = z_wg + h_wg(ij)*1e-9;
+            #set("index",n_wg(ij));
+        }
+        
+        z_min = -1*max([1500,(sum(h_sub)+500)])*1e-9;
+        z_max = (sum(h_wg) + max([2000,2*lambda]))*1e-9;
+        
+        # Create and position side etches
+        addwaveguide;
+        set("name","etch_left");
+        set("material","etch");
+        set("poles",[-15e6,0;L_sim+15e6,0]);
+        set("x",0);
+        set("y",w_sim/2);
+        set("z",(sum(h_wg)*1e-9)/2);
+        set("base height",(sum(h_wg)*1e-9));
+        set("base width",span_side*2);
+        set("base angle",sidewall);
+        set("first axis","x");
+        set("rotation 1",180);
+        
+        addwaveguide;
+        set("name","etch_right");
+        set("material","etch");
+        set("poles",[-15e6,0;L_sim+15e6,0]);
+        set("x",0);
+        set("y",-w_sim/2);
+        set("z",(sum(h_wg)*1e-9)/2);
+        set("base height",(sum(h_wg)*1e-9));
+        set("base width",span_side*2);
+        set("base angle",sidewall);
+        set("first axis","x");
+        set("rotation 1",180);
+        
+        
+        # Create and position full etches
+        x = 0;
+        for(id = 1:length(L)){
+            addwaveguide;
+            set("name", "etch_" + num2str(id));
+            set("material", "etch");
+            set("x", (x+(gaps(id)/2))*1e-9);
+            set("base width", gaps(id)*1e-9);
+            set("z", (sum(h_wg)/2)*1e-9);
+            set("base height", sum(h_wg)*1e-9);
+            set("y", 0);
+            set("poles", [0,-w_sim;0,w_sim]);
+            set("base angle", sidewall);
+            set("first axis","y");
+            set("rotation 1",180);
+            x = x + gaps(id) + L(id);
+        }
+
+        # Create and position end of waveguide etch
+        
+        addwaveguide;
+        set("name", "etch_" + num2str(id));
+        set("material", "etch");
+        set("x", L_sim);
+        set("base width", span_end*2);
+        set("z", (sum(h_wg)/2)*1e-9);
+        set("base height", sum(h_wg)*1e-9);
+        set("y", 0);
+        set("poles", [0,-w_sim;0,w_sim]);
+        set("base angle", sidewall);
+        set("first axis","y");
+        set("rotation 1",180);
+        
+        
+        # Create FDTD simulation area
+        addfdtd;
+        #set("name", "FDTD");
+        set("x min",-2e-6);
+        set("x max",L_sim);
+        set("z min",z_min);
+        set("z max",z_max);
+        set("y", 0);
+        set("y span",w_sim);
+        set("mesh accuracy",accuracy);
+        set("dt stability factor",time_step);
+        
+        # Create scatter monitor
+        addpower;
+        set("name", "scatter");
+        set("monitor type", 7);	#2D Z-normal
+        set("x min", -1200e-9);
+        set("x max", L_sim);
+        set("y", 0);
+        set("y span", w_sim);
+        set("z", z_max - 100e-9);
+        set("override global monitor settings", 1);
+        set("use wavelength spacing",1);
+        set("frequency points",101);
+        
+        # Create mode source
+        addmode;
+        set("name","source");
+        set("injection axis","x");
+        set("x", -1500e-9);
+        set("y", 0);
+        set("y span", w_sim);
+        set("z min", z_min);
+        set("z max", z_max);
+        
+        # Create waveguide monitor
+        addpower;
+        set("name", "ref");
+        set("monitor type", 5);	#2D X-normal
+        set("x", -1800e-9);
+        set("y", 0);
+        set("y span", w_sim);
+        set("z min", z_min);
+        set("z max", z_max);
+        set("override global monitor settings", 1);
+        set("use wavelength spacing",1);
+        set("frequency points",101);
+        
+        
+        
+        ### Create file version for each wavelength
+        
+        
+        for(iw = modes){
+            for(iwg = 1:length(h_wg)){
+                setnamed("waveguide"+num2str(iwg),"index",n_wg(iwg,iw));
+            }
+            if(h_sub){
+                for(isub = 1:length(h_sub)){
+                    setnamed("substrate"+num2str(isub),"index",n_wg(isub,iw));
+                }
+            }
+            setnamed("substrate","index",n_sub(size(n_sub,1),iw));
+            setnamed("source","center wavelength", wavelength(iw)*1e-9);
+            setnamed("source","wavelength span", WL_span(iw)*1e-9);
+            if(TM(iw)){
+                setnamed("source","mode selection","fundamental TM mode");
+                savefile = filename + "_" + num2str(wavelength(iw)) + "TM_" + num2str(ig) + "_sc" + num2str(scale(isc)*100) + ".fsp";
+            } else {
+                setnamed("source","mode selection","fundamental TE mode");
+                savefile = filename + "_" + num2str(wavelength(iw)) + "TE_" + num2str(ig) + "_sc" + num2str(scale(isc)*100) + ".fsp";
+            }
+            save(save_path + savefile);
+            
+            if(hyak){
+                matlabput(savefile);
+                ?matlab("fprintf(hyak,'%s%s%s\\n',hyak_command, hyak_path, savefile)");
+            }
+            
+            if(autoq){
+                addjob(savefile);
+            }
+        }
+    }
+}
+if(hyak){
+    
+    ?matlab("fclose(hyak)");
+    
+}
+cd(base_path);
+
+if(autorun){
+    runjobs;
+}

@@ -1,0 +1,150 @@
+load("notch3.fsp");
+init_path = pwd;
+
+h_sub = 0;	           #nanometers; zero for single substrate layer
+n_sub = [1.457];	#Top to bottom; last one extends beyond the simulation region (no thickness required
+
+
+h_wg = [200];
+n_wg = [3.31];	#Bottom to top; air above top layer
+
+sidewall = 85;
+
+TM = 1;
+if(TM){
+    pol = 'M';
+}else{
+    pol = 'E';
+}
+
+w_wg = 1800;
+lambda = 637;
+
+w_sim = w_wg + 2*lambda;
+
+autoq = 1;
+autorun = 0;
+
+d_gap = [60:20:300];#[60,80,100,120,150,200,250,300];
+end_type = 1;
+
+notch_path = pwd + "/GaPOx 200/";
+filename_base = "GaPOx200_" + num2str(lambda) + "T" + pol + "_w" + num2str(w_wg);
+
+switchtolayout;
+
+z_sub = 0;
+if(h_sub){
+    for(ii = 1:length(h_sub)){    #add each substrate layer
+        addrect;
+        set("name","substrate" + num2str(ii));
+        set("x",0);
+        set("x span",30e-6);
+        set("y",0);
+        set("y span",30e-6);
+        set("z max",z_sub);
+        set("z min",z_sub - h_sub(ii)*1e-9);
+        z_sub = z_sub - h_sub(ii)*1e-9;
+        set("index",n_sub(ii));
+    }
+}
+addrect;         # add bottom substrate layer
+set("name","substrate");
+set("x",0);
+set("x span",30e-6);
+set("y",0);
+set("y span",30e-6);
+set("z max",z_sub);
+set("z min",z_sub - 5000*1e-9);
+set("index",n_sub(length(n_sub)));
+
+z_wg = 0;
+
+for(ij = 1:length(h_wg)){     # add each waveguide layer
+    addrect;
+    set("name","waveguide" + num2str(ij));
+    set("x",0);
+    set("x span", 30e-6);
+    set("y",0);
+    set("y span",30e-6);
+    set("z min",z_wg);
+    set("z max",z_wg + h_wg(ij)*1e-9);
+    z_wg = z_wg + h_wg(ij)*1e-9;
+    set("index",n_wg(ij));
+}
+
+z_min = -1*max([1500,(sum(h_sub)+500)])*1e-9;
+z_max = (sum(h_wg) + max([2000,2*lambda]))*1e-9;
+
+
+setnamed("FDTD","y span", (w_sim)*1e-9);
+setnamed("FDTD","z min",z_min);
+setnamed("FDTD","z max",z_max);
+
+
+setnamed("etch_right","y",(-w_sim/2)*1e-9);
+setnamed("etch_left","y",(w_sim/2)*1e-9);
+setnamed("etch_right","base width",2*lambda*1e-9);
+setnamed("etch_left","base width",2*lambda*1e-9);
+setnamed("etch_right","base height",sum(h_wg)*1e-9);
+setnamed("etch_left","base height",sum(h_wg)*1e-9);
+setnamed("etch_right","z",(sum(h_wg)/2)*1e-9);
+setnamed("etch_left","z",(sum(h_wg)/2)*1e-9);
+setnamed("etch_right","base angle",sidewall);
+setnamed("etch_left","base angle",sidewall);
+
+
+setnamed("source","center wavelength",lambda*1e-9);
+setnamed("source","y span", (w_wg + lambda)*1e-9);
+setnamed("source","z min", -1*lambda*1e-9);
+setnamed("source","z max", (sum(h_wg) + lambda)*1e-9);
+setnamed("source","mode selection","fundamental T"+pol+" mode");
+
+setnamed("scatter", "z", z_max - 100e-9);
+setnamed("reflect","z min", z_min + 100e-9);
+setnamed("trans","z min", z_min + 100e-9);
+setnamed("reflect","z max", z_max - 200e-9);
+setnamed("trans","z max", z_max - 200e-9);
+setnamed("scatter","y span", (w_sim)*1e-9);
+setnamed("reflect","y span", (w_sim)*1e-9);
+setnamed("trans","y span", (w_sim)*1e-9);
+
+setnamed("etch_notch","base height",sum(h_wg)*1e-9);
+setnamed("etch_notch","z",(sum(h_wg)/2)*1e-9);
+setnamed("etch_notch","base angle",sidewall);
+setnamed("etch_end","base height",sum(h_wg)*1e-9);
+setnamed("etch_end","z",(sum(h_wg)/2)*1e-9);
+setnamed("etch_end","base angle",sidewall);
+
+
+for(ig = 1:length(d_gap)){
+    filename = notch_path + "notch_" + filename_base + "_d" + num2str(d_gap(ig)) + ".fsp";
+    setnamed("etch_notch","enabled",1);
+    setnamed("etch_end","enabled",0);
+    setnamed("etch_notch","base width", d_gap(ig)*1e-9);
+    save(filename);
+    if(autoq){
+        addjob(filename);
+    }
+}
+
+if(end_type){
+    filename = notch_path + "notch_" + filename_base + "_end.fsp";
+    setnamed("etch_notch","enabled",0);
+    setnamed("etch_end","enabled",1);
+    
+    #for(ij = 1:length(h_wg)){
+        #setnamed("waveguide" + num2str(ij), "x max", 0);
+    #}
+    save(filename);
+    if(autoq){
+        addjob(filename);
+    }
+    
+}
+
+if(autorun){
+    runjobs;
+}
+    
+cd(init_path);

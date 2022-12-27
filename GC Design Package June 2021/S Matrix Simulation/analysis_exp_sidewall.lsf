@@ -1,0 +1,191 @@
+wavelength = [1550,1080,637,775];	# array of relevant wavelengths, in nanometers
+base_path = pwd;	# path to save data
+path = "/GaPOx 200/";	# path from base path to notch files (must be run beforehand)
+
+save_file = "S_Param_GaPOx200_2Te_w2500";	# filename of save file
+json = 0; # Save data as .json instead of .mat. Only compatible with single wavelength specs, but the jsons can be combined afterward.
+
+
+WL = [2];	# set of wavelengths to analyze
+TM = [0];	# polarization for each wavelength; 0 for TE, 1 for TM
+w = [2500];
+
+###NOTE: Parameters for all selected wavelengths will be put in a single file, which will make the optimization script look for multi-wavelength designs
+
+d_gap = [60:20:300];       # notch widths to simulate, in nanometers
+end_type = 1;			# 1 if there is an end-of-waveguide file
+
+
+S_reflect = matrix(length(WL),length(d_gap)+end_type);
+S_trans = matrix(length(WL),length(d_gap)+end_type);
+S_scatter = matrix(length(WL),length(d_gap)+end_type);
+
+n_eff = matrix(1,length(WL));
+
+
+for(iw = 1:length(WL)){
+    if(TM(iw)){
+        polarization = "TM";
+    }else{
+        polarization = "TE";
+    }
+    file_base = "notch_GaPOx200_" + num2str(wavelength(WL(iw))) + polarization + "_w" + num2str(w(iw)) + "_";  #name of the notch files, without notch width
+    
+    
+    for(id = 1:length(d_gap)+end_type){
+        # load the simulation file
+        
+        if(id <= length(d_gap)){
+            load(base_path+path+file_base+"d"+num2str(d_gap(id))+".fsp");
+        } else {
+            load(base_path+path+file_base+"end.fsp");
+        }
+        
+        
+        #retrieve monitor and source positions to correct phase shifts
+        x_reflect = getnamed("reflect","x");
+        x_trans = getnamed("trans","x");
+        x_source = getnamed("source","x");
+        
+        
+        if(id > length(d_gap)){
+            x_minus = 0;
+            x_plus = 0;
+        }else{
+            x_plus = 0.5*getnamed("etch_notch","base width");
+            x_minus = -1*x_plus;
+        }
+        
+        
+        selectpartial("waveguide");
+        z_surf = getnamed("waveguide" + num2str(getnumber),"z max");
+        z_scatter = getnamed("scatter","z");
+        
+        ?id;
+        if(exist("mode_in")){
+            clear(mode_in);
+            clear(exp_trans);
+            clear(exp_reflect);
+            clear(E_scatter);
+            clear(mode_neff);
+            
+        }
+        
+        ?id;
+        #retrieve input mode and monitor data
+        mode_in = getresult("source","mode profile");
+        ?"mode";
+        exp_trans = getresult("expansion","expansion for trans");
+        ?"trans";
+        exp_reflect = getresult("expansion","expansion for reflect");
+        ?"ref";
+        E_scatter = getresult("scatter","E");
+        ?"scatter";
+        mode_neff = getresult("source","neff");
+        ?"neff";
+        
+        ?id;
+        #retrieve coordinates for field data
+        y_wg = mode_in.y;
+        z_wg = mode_in.z;
+        x_scatter = E_scatter.x;
+        y_scatter = E_scatter.y;
+        
+        neff = mode_neff.neff;	# Why does it not let me do this directly...?
+        n_eff(iw) = neff;
+        E_scatter = E_scatter.E;
+        
+        lambda = mode_in.lambda;
+        eps_wg = (mode_in.index)^2;
+        E_in = mode_in.E;
+        
+        norm_in = abs(sum(integrate(eps_wg*conj(E_in)*E_in,2:3,y_wg,z_wg)));
+        
+        trans = exp_trans.a;
+        ref = exp_reflect.b;
+        
+        phase_source = exp(-1i*neff*(x_minus-x_source)/lambda);
+        phase_trans = exp(-1i*neff*(x_trans-x_plus)/lambda);
+        phase_reflect = exp(-1i*neff*(x_minus-x_reflect)/lambda);
+        phase_scatter = exp(-1i*(z_scatter-z_surf)/lambda);
+        
+        S_reflect(iw,id) = ref*phase_source*phase_reflect;
+        S_trans(iw,id) = trans*phase_source*phase_trans;
+        
+        
+        x = matrix(length(x_scatter),length(y_scatter),1,1,1);
+        #y = matrix(length(x_scatter),length(y_scatter),1,1,1);
+        for(ix = 1:length(x_scatter)){
+            for(iy = 1:length(y_scatter)){
+                x(ix,iy) = x_scatter(ix);
+                #y(ix,iy) = y_scatter(iy);
+            }
+            
+        }
+        
+        if(polarization == "TE"){
+            E_scatter_p = pinch(E_scatter(:,:,1,1,2));
+        }else{
+            E_scatter_p = pinch(E_scatter(:,:,1,1,1));
+        }
+        
+        x_p = ceil(length(x_scatter)/2);
+        x_n = floor(length(x_scatter)/2);
+        y_p = ceil(length(y_scatter)/2);
+        y_n = floor(length(y_scatter)/2);
+        
+        center_field = (E_scatter_p(x_p,y_p) + E_scatter_p(x_p,y_n) + E_scatter_p(x_n,y_p) + E_scatter_p(x_n,y_n))/4;
+        center_phase = center_field/abs(center_field);
+        S_scatter(iw,id) = center_field*phase_source*phase_scatter;
+        
+        
+    }
+}
+?"eeep";
+cd(base_path);
+#write(save_file+'.txt',"Wavelength	Polarization	Thickness	Effective Index	Grate Width		S_trans    S_reflect	S_scatter");
+
+#for(iw = 1:length(WL)){
+#for(id = 1:length(d_gap)){
+#write(save_file,num2str(wavelength(WL(iw)))+"	"+polarization+"	"+num2str([thickness,neff,d_gap(id),S_trans(iw,id),S_reflect(iw,id),S_scatter(iw,id)]));
+#}
+    #if(end_type){
+        #write(save_file,num2str(wavelength(WL(iw)))+"	"+polarization+"	"+num2str([thickness,neff,0,S_trans(iw,length(d_gap)+1),S_reflect(iw,length(d_gap)+1),S_scatter(iw,length(d_gap)+1)]));
+    #}
+#}
+r = S_reflect;
+t = S_trans;
+s = S_scatter;
+d = d_gap*1e-3;
+end_type = end_type;
+#n_eff = neff;
+lambda = wavelength(WL)*1e-3;
+
+if(json){
+    gr_spec = struct;
+    gr_spec.r = r(1,:);
+    gr_spec.s = s(1,:);
+    gr_spec.t = t(1,:);
+    gr_spec.end = end_type;
+    gr_spec.d = d;
+    gr_spec.lambda = lambda(1);
+    gr_spec.neff = n_eff(1);    
+    jsonsave(save_file, gr_spec);
+}else{
+    matlab("clear all");
+    matlabput(r,t,s,d,end_type,lambda,n_eff,save_file);
+    matlab("gr_spec = cell(1,length(lambda));");
+    for(ii = 1:length(lambda)){
+        matlabput(ii);
+        matlab("gr_spec{ii} = struct();");
+        matlab("gr_spec{ii}.r = r(ii,:);");
+        matlab("gr_spec{ii}.s = s(ii,:);");
+        matlab("gr_spec{ii}.t = t(ii,:);");
+        matlab("gr_spec{ii}.end = end_type;");
+        matlab("gr_spec{ii}.d = d;");
+        matlab("gr_spec{ii}.lambda = lambda(ii);");
+        matlab("gr_spec{ii}.neff = n_eff(ii);");
+    }
+    matlab("save(save_file,'gr_spec')");
+    #matlab("save(save_file)");
+}
